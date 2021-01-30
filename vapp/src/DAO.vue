@@ -4,6 +4,7 @@
       <h1 class="text-center">DAO</h1>
 
       <p>Shares: {{ shares }}</p>
+      <p>Available Funds: {{ availableFunds }}</p>
       <div v-if="activeAccount === admin">
         <!-- <> -->
         <div class="row">
@@ -51,13 +52,19 @@
 
       <hr />
 
+      <!-- reedeem shares -->
       <div class="row">
         <div class="col-sm-12">
           <h2>Redeem shares</h2>
           <form @submit.prevent="redeemShares">
             <div class="form-group">
               <label htmlFor="amount">Amount</label>
-              <input type="text" class="form-control" id="amount" />
+              <input
+                type="text"
+                v-model="reedeem_amount"
+                class="form-control"
+                id="amount"
+              />
             </div>
             <button type="submit" class="btn btn-primary">Submit</button>
           </form>
@@ -66,13 +73,28 @@
 
       <hr />
 
+      <!-- transfer shares  -->
       <div class="row">
         <div class="col-sm-12">
           <h2>Transfer shares</h2>
           <form @submit.prevent="transferShares">
             <div class="form-group">
               <label htmlFor="amount">Amount</label>
-              <input type="text" class="form-control" id="amount" />
+              <input
+                v-model="tr_amount"
+                type="text"
+                class="form-control"
+                id="amount"
+              />
+            </div>
+            <div class="form-group">
+              <label htmlFor="address">Address</label>
+              <input
+                v-model="tr_address"
+                type="text"
+                class="form-control"
+                id="address"
+              />
             </div>
             <button type="submit" class="btn btn-primary">Submit</button>
           </form>
@@ -81,21 +103,37 @@
 
       <hr />
 
+      <!-- create proposal -->
       <div class="row">
         <div class="col-sm-12">
           <h2>Create proposal</h2>
           <form @submit.prevent="createProposal">
             <div class="form-group">
               <label htmlFor="name">Name</label>
-              <input type="text" class="form-control" id="name" />
+              <input
+                type="text"
+                v-model="name"
+                class="form-control"
+                id="name"
+              />
             </div>
             <div class="form-group">
               <label htmlFor="amount">Amount</label>
-              <input type="text" class="form-control" id="amount" />
+              <input
+                type="text"
+                v-model="pr_amount"
+                class="form-control"
+                id="amount"
+              />
             </div>
             <div class="form-group">
               <label htmlFor="recipient">Recipient</label>
-              <input type="text" class="form-control" id="recipient" />
+              <input
+                type="text"
+                v-model="recipient"
+                class="form-control"
+                id="recipient"
+              />
             </div>
             <button type="submit" class="btn btn-primary">Submit</button>
           </form>
@@ -148,9 +186,7 @@
                 <td>
                   <span v-if="proposal.executed">Yes</span>
                   <button
-                    v-else-if="
-                      admin.toLowerCase() === accounts[0].toLowerCase()
-                    "
+                    v-else-if="admin === activeAccount"
                     @click.prevent="executeProposal(proposal.id)"
                     type="submit"
                     class="btn btn-primary"
@@ -172,27 +208,67 @@ import { mapGetters } from "vuex";
 export default {
   data: () => ({
     shares: undefined,
+    availableFunds: undefined,
     proposals: undefined,
     admin: undefined,
     amount: undefined,
     contr_amount: undefined,
+    tr_amount: undefined,
+    tr_address: undefined,
+    reedeem_amount: undefined,
     to: undefined,
+    pr_amount: undefined,
+    recipient: undefined,
+    name: undefined,
   }),
   methods: {
     withdrawEther() {
       this.drizzleInstance.contracts.DAO.methods
         .withdrawEther(this.amount, this.to)
-        .send();
+        .send()
+        .then(() => this.init());
     },
     contribute() {
       this.drizzleInstance.contracts.DAO.methods
         .contribute()
-        .send({ from: this.activeAccount, value: this.contr_amount });
+        .send({ from: this.activeAccount, value: this.contr_amount })
+        .then(() => this.init());
     },
-    redeemShares() {},
-    transferShares() {},
-    createProposal() {},
-    executeProposal(id) {},
+    redeemShares() {
+      this.drizzleInstance.contracts.DAO.methods
+        .redeemShare(this.reedeem_amount)
+        .send()
+        .then(() => this.init());
+    },
+    async transferShares() {
+      this.drizzleInstance.contracts.DAO.methods
+        .transferShare(this.tr_amount, this.tr_address)
+        .send()
+        .then(() => this.init());
+    },
+    isFinished(proposal) {
+      const now = new Date().getTime();
+      const proposalEnd = new Date(parseInt(proposal.end) * 1000);
+      return proposalEnd > now > 0 ? false : true;
+    },
+    createProposal() {
+      this.drizzleInstance.contracts.DAO.methods
+        .createProposal(this.name, this.pr_amount, this.recipient)
+        .send()
+        .then(() => this.init());
+    },
+    executeProposal(id) {
+      this.drizzleInstance.contracts.DAO.methods
+        .executeProposal(id)
+        .send()
+        .then(() => this.init());
+    },
+    vote(id) {
+      this.drizzleInstance.contracts.DAO.methods
+        .vote(id)
+        .send()
+        .then(() => this.init());
+    },
     init() {
       const contract = this.drizzleInstance.contracts.DAO;
       contract.methods
@@ -207,10 +283,33 @@ export default {
         .then((res) => {
           this.shares = res;
         });
+      contract.methods
+        .availableFunds()
+        .call()
+        .then((res) => {
+          this.availableFunds = res;
+        });
+      this.updateProposals();
+    },
+    async updateProposals() {
+      const contract = this.drizzleInstance.contracts.DAO;
+      const nextProposalId = parseInt(
+        await contract.methods.nextProposalId().call()
+      );
+
+      const proposals = [];
+      for (let i = 0; i < nextProposalId; i++) {
+        const [proposal, hasVoted] = await Promise.all([
+          contract.methods.proposals(i).call(),
+          contract.methods.votes(this.activeAccount, i).call(),
+        ]);
+        proposals.push({ ...proposal, hasVoted });
+      }
+      this.proposals = proposals;
     },
   },
   computed: {
-    ...mapGetters("accounts", ["activeAccount"]),
+    ...mapGetters("accounts", ["activeBalance", "activeAccount"]),
     ...mapGetters("drizzle", ["drizzleInstance"]),
   },
   created() {
